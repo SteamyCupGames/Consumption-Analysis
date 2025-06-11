@@ -1,0 +1,188 @@
+---
+title: "Tarea2_Nestor_Piedra"
+author: "Néstor Piedra"
+date: "2025-06-11"
+output:
+    html_document: 
+      toc: true
+      toc_float: true
+      fig_width: 8
+      fig_caption: true
+      fig_height: 4
+      df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r libraries, message=FALSE, warning=FALSE}
+
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(caret)
+library(corrplot)
+
+```
+
+# 📈 Métodos de Regresión
+
+## Tarea 2. Consumo Eléctrico
+
+El consumo eléctrico doméstico es un indicador clave para la planificación de infraestructura energética. Este análisis busca modelar y predecir el comportamiento del consumo activo a partir de variables técnicas registradas minuto a minuto, con el fin de identificar patrones de demanda y generar recomendaciones aplicables a horas pico.
+
+Una incorrecta planeación del consumo eléctrico según las fuentes de energía que se tengan en un país puede desencadenar inconvenientes, como el reciente apagón masivo en la península ibérica, causado presuntamente por un incorrecto análisis del consumo y una dependencia de las energías renovables las cuales no brindan tanta constancia ni consistencia como otros métodos de generación.
+
+### 📊 Carga de los datos
+
+```{r data_load, message=FALSE, warning=FALSE}
+
+# Carga de los datos y verificación
+
+datos <- read.csv("consumo_electrico_domestico.csv", sep =";", dec = ".", header=TRUE, stringsAsFactors = TRUE)
+head(datos)
+
+sum(!is.na(datos))
+summary(datos)
+
+```
+Pueden observarse bastantes NA en el conjunto de datos.Por lo que se realizará una limpieza de los mismos previo a su análisis, así mismo debido a la naturaleza de los datos, para que el modelo tome la menor cantidad de tiempo posible manteniendo información relevante, se limitará el estudio a únicamente un año (2010 por ser el más reciente) para optimizar el rendimiento.
+
+```{r ETL, message=FALSE, warning=FALSE}
+
+# Convertir fecha y filtrar solo un año 
+datos$FechaHora <- as.POSIXct(paste(datos$Fecha, datos$Hora), format="%d/%m/%Y %H:%M:%S")
+datos$Anno <- format(datos$FechaHora, "%Y")
+
+datos_2010 <- datos %>% filter(Anno == "2010")
+
+# Eliminación de las columnas irrelevantes y NA
+datos_modelo <- datos_2010 %>% na.omit() %>% select(-Fecha, -Hora, -FechaHora, -Anno) 
+```
+
+Con los datos limpios, puede procederse con el modelo de regresión lineal. En este escenario se crea un modelo utilizando las variables disponibles (Excepto Energia_activa_global).
+
+### 📈  Modelo de Regresión Lineal
+
+```{r LM, message=FALSE, warning=FALSE}
+
+# Modelo completo
+modelo_lm <- lm(Energia_activa_global ~ ., data = datos_modelo)
+summary(modelo_lm)
+
+```
+
+De acuerdo con el summary de los datos, todas las variables independientes cuentan con suficiente distinción para ser buenas variables predictoras.Por lo que utilizaremos todas las variables para este trabajo.
+
+### 🏋 Entrenamiento de un nuevo modelo de predicción y correlación
+
+```{r MPL, message=FALSE, warning=FALSE}
+
+tam<-dim(datos_modelo)
+n<-tam[1]
+muestra <- sample(1:n,floor(n*0.33))
+
+ttesting <- datos_modelo[muestra,]
+taprendizaje <- datos_modelo[-muestra,]
+
+modelo <- lm(Energia_activa_global ~ ., data = taprendizaje) # Todas las variables presentaron *** por lo que se utilizan todas
+
+# Predicción
+y_predict <- predict(modelo, taprendizaje)
+
+```
+
+Una vez realizada la predicción se genera la correlación:
+
+```{r corr, message=FALSE, warning=FALSE}
+
+# Correlación entre predicción y valores reales
+correlacion <- cor(y_predict, taprendizaje$Energia_activa_global)
+correlacion
+
+```
+
+El modelo muestra un R² de 0.999, lo que indica un ajuste casi perfecto.
+
+
+### ⚡ Energía en 2020
+
+```{r data_load_2020, message=FALSE, warning=FALSE}
+
+# Carga de los datos y verificación
+
+datos_2020 <- read.csv("consumo_electrico_domestico2020.csv", sep =";", dec = ".", header=TRUE, stringsAsFactors = TRUE)
+head(datos_2020)
+
+sum(!is.na(datos_2020))
+summary(datos_2020)
+
+```
+
+```{r predict_2020, message=FALSE, warning=FALSE}
+
+datos_2020$Energia_activa_global <- predict(modelo, newdata = datos_2020)
+head(datos_2020)
+
+```
+
+
+Una vez generados los valores de energía mediante el modelo predictivo, podemos encontrar el día y la hora con mayor consumo, tal que
+
+```{r consumption, message=FALSE, warning=FALSE}
+
+datos$DiaSemana <- weekdays(datos$FechaHora)
+datos$Hora <- format(datos$FechaHora, "%H:00")
+
+consumo_horario <- datos %>%
+  group_by(DiaSemana, Hora) %>%
+  summarise(Media = mean(Energia_activa_global, na.rm = TRUE)) %>%
+  arrange(desc(Media))
+
+head(consumo_horario, 1)
+
+```
+
+Con esta información sabemos que el pico de consumo se da el día domingo alrededor de las 8:00 p.m, de manera que puede crearse un modelo para predecir el consumo en horas pico de la red eléctrica.
+
+```{r peak_consumption, message=FALSE, warning=FALSE}
+
+datos_pico <- datos %>% 
+  filter(weekdays(FechaHora) == "domingo", format(FechaHora, "%H") == "20") %>%
+  select(Energia_activa_global, Energia_reactiva_global) %>%
+  na.omit()
+
+modelo_pico <- lm(Energia_activa_global ~ Energia_reactiva_global, data = datos_pico)
+
+# Simulacion 30 nuevos valores de x
+set.seed(123)
+simulacion <- data.frame(Energia_reactiva_global = runif(30, 
+                                        min = min(datos_pico$Energia_reactiva_global), 
+                                        max = max(datos_pico$Energia_reactiva_global)))
+
+simulacion$Energia_activa_prediccion <- predict(modelo_pico, newdata = simulacion)
+
+ggplot() +
+  geom_point(data = datos_pico, aes(x = Energia_reactiva_global, y = Energia_activa_global), color = "darkgreen", alpha = 0.6, size = 2) +
+  geom_point(data = simulacion, aes(x = Energia_reactiva_global, y = Energia_activa_prediccion), color = "orange", shape = 17, size = 2.5) +
+  geom_smooth(data = datos_pico, aes(x = Energia_reactiva_global, y = Energia_activa_global), method = "lm", se = FALSE, color = "midnightblue", size = 1) +
+  labs(title = "Comparación entre valores reales y simulados",
+    subtitle = "Energía activa global vs. Energía reactiva global",
+    x = "Energía Reactiva Global (kVARh)",
+    y = "Energía Activa Global (kWh)",
+    caption = "Puntos verdes: valores reales | Naranjas: simulados | Línea azul: tendencia"
+  ) +
+  theme_minimal(base_size = 13)
+
+```
+
+### 📌 Conclusiones
+
+- El modelo logra predecir el consumo eléctrico con alta precisión (correlación 0.999).
+- El mayor consumo se presenta los domingos a las 8:00 p.m., lo cual indica una posible saturación de la red en ese horario.
+- Este tipo de modelo podría ayudar a mejorar la gestión de la demanda eléctrica en zonas residenciales.
+
+Como mejora futura, podrían incorporarse todos los años al análisis para un mejor modelo de predicción.
+
