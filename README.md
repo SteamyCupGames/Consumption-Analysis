@@ -65,7 +65,11 @@ Each record includes:
 To run this analysis:
 
 1. Clone this repo
-2. Open the `.Rmd` file in **RStudio**
+2. Open the `.Rmd` file in **RStudio**.
 3. Install the required libraries:
    ```r
    install.packages(c("readr", "dplyr", "ggplot2", "caret", "corrplot"))
+   
+If you prefer, you can take a look to the **HTML Report**
+
+
